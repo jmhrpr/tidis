@@ -30,6 +30,7 @@ impl Multi {
         let mut abort_on_error = false;
 
         for cmd in cmds {
+            debug!(LOGGER, "executing command {cmd:?} in MULTI tx");
             let result = match cmd {
                 Command::Incr(mut cmd) => cmd.incr_by(txn_rc.clone(), true).await,
                 Command::IncrBy(mut cmd) => cmd.incr_by(txn_rc.clone(), true).await,
@@ -109,7 +110,8 @@ impl Multi {
                 Ok(resp) => {
                     // check response error
                     match resp {
-                        Frame::ErrorOwned(_) | Frame::ErrorString(_) => {
+                        e @ (Frame::ErrorOwned(_) | Frame::ErrorString(_)) => {
+                            error!(LOGGER, "EXECABORT {e:?}");
                             response = resp_err(REDIS_EXEC_ERR);
                             abort_on_error = true;
                             break;
