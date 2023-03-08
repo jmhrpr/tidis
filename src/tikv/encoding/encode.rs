@@ -381,12 +381,13 @@ impl KeyEncoder {
 
     pub fn encode_txnkv_set_data_key(&self, ukey: &str, member: &str, version: u16) -> Key {
         let enc_ukey = self.encode_bytes(ukey.as_bytes());
-        let mut key = Vec::with_capacity(8 + enc_ukey.len() + std::cmp::min(100, member.len()));
+        let truncated_val_len = std::cmp::min(100, member.len());
+        let mut key = Vec::with_capacity(8 + enc_ukey.len() + truncated_val_len);
 
         self.encode_txnkv_type_data_key_prefix(DATA_TYPE_SET, &enc_ukey, &mut key, version);
         key.push(PLACE_HOLDER);
         // truncate key to avoid max TiKV key size being reached (first 100 chars of member must be unique)
-        key.extend_from_slice(&member.as_bytes()[..100]);
+        key.extend_from_slice(&member.as_bytes()[..truncated_val_len]);
         key.into()
     }
 
