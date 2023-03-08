@@ -87,7 +87,9 @@ impl SetCommandCtx {
 
         let key = key.to_owned();
         let members = members.to_owned();
+        // <TXN_KEY_PREFIX><instance_id><DATA_TYPE_USER><chunks(key)><DATA_TYPE_META>
         let meta_key = KEY_ENCODER.encode_txnkv_meta_key(&key);
+        // RANDOM INDEX WHICH INCREMENTS (default 0-100)
         let rand_idx = gen_next_meta_index();
 
         let resp = client
@@ -131,7 +133,7 @@ impl SetCommandCtx {
                             for m in &members {
                                 let data_key =
                                     KEY_ENCODER.encode_txnkv_set_data_key(&key, m, version);
-                                txn.put(data_key, vec![0]).await?;
+                                txn.put(data_key, m.as_bytes()).await?;
                             }
 
                             // choose a random sub meta key for update, create if not exists
@@ -158,19 +160,26 @@ impl SetCommandCtx {
 
                             Ok(added)
                         }
+                        // KEY NOT USED BEFORE
                         None => {
+                            // DROP THE TX (unlock the mutex on the tx)
                             drop(txn);
+                            // get next available gc "version" for key
                             let version = get_version_for_new(&key, txn_rc.clone()).await?;
+                            // get lock on tx
                             txn = txn_rc.lock().await;
 
                             // create new meta key and meta value
                             for m in &members {
                                 // check member already exists
+                                // <TXN_KEY_PREFIX><instance_id><DT_USER><chunks(key)><DT_SET><be(version)><PLACEHOLDER><member>
                                 let data_key =
                                     KEY_ENCODER.encode_txnkv_set_data_key(&key, m, version);
+                                // create the key
                                 // value can not be vec![] if use cse as backend
-                                txn.put(data_key, vec![0]).await?;
+                                txn.put(data_key, m.as_bytes()).await?;
                             }
+                            // SET METAKEY TO <SET_TYPE_BYTE><TTL><VERSION><INDEX> INDEX = meta_key_number
                             // create meta key
                             let meta_value = KEY_ENCODER.encode_txnkv_set_meta_value(0, version, 0);
                             txn.put(meta_key, meta_value).await?;
@@ -178,6 +187,7 @@ impl SetCommandCtx {
                             let added = count_unique_keys(&members) as i64;
 
                             // create sub meta key with a random index
+                            // <TXN><iid><DT_USER><chunks(key)><DT_META><version><PLACEHOLDER><be(rand_idx)>
                             let sub_meta_key =
                                 KEY_ENCODER.encode_txnkv_sub_meta_key(&key, version, rand_idx);
                             txn.put(sub_meta_key, added.to_be_bytes().to_vec()).await?;
@@ -382,16 +392,26 @@ impl SetCommandCtx {
 
                             let bound_range =
                                 KEY_ENCODER.encode_txnkv_set_data_key_range(&key, version);
+                            // let iter = txn
+                            //     .scan_keys(bound_range, ele_count.try_into().unwrap())
+                            //     .await?;
+
                             let iter = txn
-                                .scan_keys(bound_range, ele_count.try_into().unwrap())
+                                .scan(bound_range, ele_count.try_into().unwrap())
                                 .await?;
 
+                            // let mut resp: Vec<Frame> = iter
+                            //     .map(|k| {
+                            //         // decode member from data key
+                            //         let user_key =
+                            //             KeyDecoder::decode_key_set_member_from_datakey(&key, k);
+                            //         resp_bulk(user_key)
+                            //     })
+                            //     .collect();
+
                             let mut resp: Vec<Frame> = iter
-                                .map(|k| {
-                                    // decode member from data key
-                                    let user_key =
-                                        KeyDecoder::decode_key_set_member_from_datakey(&key, k);
-                                    resp_bulk(user_key)
+                                .map(|kv| {
+                                    resp_bulk(kv.1)
                                 })
                                 .collect();
 
@@ -469,16 +489,19 @@ impl SetCommandCtx {
                             let bound_range =
                                 KEY_ENCODER.encode_txnkv_set_data_key_range(&key, version);
 
-                            let iter = txn.scan_keys(bound_range, u32::MAX).await?;
+                            // get values aswell as keys
+                            let iter = txn.scan(bound_range, u32::MAX).await?;
 
-                            let resp = iter
-                                .map(|k| {
-                                    // decode member from data key
-                                    let user_key =
-                                        KeyDecoder::decode_key_set_member_from_datakey(&key, k);
-                                    resp_bulk(user_key)
-                                })
-                                .collect();
+                            let resp = iter.map(|kv| resp_bulk(kv.1)).collect();
+
+                            // let resp = iter
+                            //     .map(|k| {
+                            //         // decode member from data key
+                            //         let user_key =
+                            //             KeyDecoder::decode_key_set_member_from_datakey(&key, k);
+                            //         resp_bulk(user_key)
+                            //     })
+                            //     .collect();
 
                             Ok(resp_array(resp))
                         }
@@ -615,18 +638,29 @@ impl SetCommandCtx {
 
                             let bound_range =
                                 KEY_ENCODER.encode_txnkv_set_data_key_range(&key, version);
+                            // let iter = txn
+                            //     .scan_keys(bound_range, count.try_into().unwrap())
+                            //     .await?;
+
                             let iter = txn
-                                .scan_keys(bound_range, count.try_into().unwrap())
+                                .scan(bound_range, count.try_into().unwrap())
                                 .await?;
 
                             let mut data_key_to_delete = vec![];
+                            // let resp = iter
+                            //     .map(|k| {
+                            //         data_key_to_delete.push(k.clone());
+                            //         // decode member from data key
+                            //         let member =
+                            //             KeyDecoder::decode_key_set_member_from_datakey(&key, k);
+                            //         resp_bulk(member)
+                            //     })
+                            //     .collect();
+
                             let resp = iter
-                                .map(|k| {
-                                    data_key_to_delete.push(k.clone());
-                                    // decode member from data key
-                                    let member =
-                                        KeyDecoder::decode_key_set_member_from_datakey(&key, k);
-                                    resp_bulk(member)
+                                .map(|kv| {
+                                    data_key_to_delete.push(kv.0.clone());
+                                    resp_bulk(kv.1)
                                 })
                                 .collect();
 

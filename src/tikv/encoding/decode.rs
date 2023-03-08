@@ -109,12 +109,12 @@ impl KeyDecoder {
         u64::from_be_bytes(key[idx..].try_into().unwrap())
     }
 
-    pub fn decode_key_set_member_from_datakey(ukey: &str, key: Key) -> Vec<u8> {
-        let key: Vec<u8> = key.into();
-        let enc_ukey = KEY_ENCODER.encode_bytes(ukey.as_bytes());
-        let idx = 8 + enc_ukey.len();
-        key[idx..].to_vec()
-    }
+    // pub fn decode_key_set_member_from_datakey(ukey: &str, key: Key) -> Vec<u8> {
+    //     let key: Vec<u8> = key.into();
+    //     let enc_ukey = KEY_ENCODER.encode_bytes(ukey.as_bytes());
+    //     let idx = 8 + enc_ukey.len();
+    //     key[idx..].to_vec()
+    // }
 
     pub fn decode_cmp_uint64_to_f64(u: u64) -> f64 {
         let mut score = u;
